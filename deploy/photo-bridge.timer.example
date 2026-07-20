@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule a photo-bridge archival job
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=15m
+Unit=photo-bridge.service
+
+[Install]
+WantedBy=timers.target

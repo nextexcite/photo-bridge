@@ -1,0 +1,52 @@
+# Local configuration and secrets
+/config/
+/.env
+/.env.*
+!/config.example.yaml
+/rclone.conf
+/**/*.rclone.conf
+*.token
+*.credentials.json
+*.oauth.json
+
+# Runtime and personal data
+/data/
+/state/
+/reports/
+/profiles/
+/chrome-profile/
+/takeout/
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.sqlite
+*.sqlite3
+*.db
+*.log
+
+# Media must never enter this public repository
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.heic
+*.avif
+*.webp
+*.tif
+*.tiff
+*.dng
+*.raw
+*.mp4
+*.mov
+*.mkv
+*.avi
+
+# Build and editor output
+/bin/
+/dist/
+/coverage.out
+/.idea/
+/.vscode/
+.DS_Store

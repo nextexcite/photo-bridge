@@ -1,0 +1,28 @@
+[Unit]
+Description=Run one non-destructive photo-bridge archival job
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=ghcr.io/example/photo-bridge:0.1.0
+ContainerName=photo-bridge-example
+Exec=run --config /config/config.yaml --state-dir /state --job example-archive
+User=65532:65532
+ReadOnly=true
+NoNewPrivileges=true
+DropCapability=all
+Environment=PHOTOBRIDGE_RCLONE_CONFIG_FILE=/run/secrets/rclone.conf
+Volume=/srv/photo-bridge/config:/config:ro,Z
+Volume=/srv/photo-bridge/secrets/rclone.conf:/run/secrets/rclone.conf:ro,Z
+Volume=/srv/photo-bridge/data:/data:ro,Z
+Volume=/srv/photo-bridge/state:/state:rw,Z
+Tmpfs=/tmp:rw,noexec,nosuid,nodev,size=16m
+
+[Service]
+Type=oneshot
+TimeoutStartSec=infinity
+# Exit 6 is a normal polling result: no new complete Takeout export is ready.
+SuccessExitStatus=6
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: 1.26.4
+          cache: true
+      - name: Install pinned rclone
+        run: |
+          archive=rclone-v1.74.4-linux-amd64.zip
+          curl --fail --location --silent --show-error \
+            "https://downloads.rclone.org/v1.74.4/${archive}" --output "/tmp/${archive}"
+          echo "fe435e0c36228e7c2f116a8701f01127bb1f694005fc11d1f27186c8bca4115d  /tmp/${archive}" | sha256sum --check --strict
+          unzip -q "/tmp/${archive}" -d /tmp/rclone
+          sudo install -m 0755 /tmp/rclone/rclone-v1.74.4-linux-amd64/rclone /usr/local/bin/rclone
+      - name: Format, test, and vet
+        run: |
+          scripts/fmt-check.sh
+          go test ./...
+          go vet ./...
+          scripts/integration-local.sh
+      - name: Public shape and identity audit
+        run: scripts/public-audit.sh --skip-gitleaks
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

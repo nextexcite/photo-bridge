@@ -1,0 +1,37 @@
+apiVersion: photo-bridge/v1alpha1
+
+jobs:
+  - name: example-archive
+    operation: copy
+    source:
+      driver: filesystem
+      path: /data/input
+    destination:
+      driver: rclone
+      remote: archive-remote
+      path: photos/account-a
+    policy:
+      manifest: sha256
+      verification: auto
+      transfers: 8
+      retries: 3
+
+  # Google Takeout can create one ZIP or a numbered set. This job polls a
+  # synthetic Drive remote, waits for a stable set, and copies only that set.
+  - name: example-takeout
+    operation: copy
+    source:
+      driver: rclone
+      remote: source-drive
+      path: Takeout
+      selector:
+        kind: google-takeout-latest
+        settleFor: 2h
+    destination:
+      driver: filesystem
+      path: /data/takeout-archive
+    policy:
+      manifest: auto
+      verification: auto
+      transfers: 4
+      retries: 3

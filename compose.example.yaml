@@ -1,0 +1,28 @@
+services:
+  photo-bridge:
+    image: ${PHOTOBRIDGE_IMAGE:?set an immutable photo-bridge image reference}
+    user: "65532:65532"
+    read_only: true
+    restart: "no"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    environment:
+      PHOTOBRIDGE_RCLONE_CONFIG_FILE: /run/secrets/rclone.conf
+    command:
+      - run
+      - --config
+      - /config/config.yaml
+      - --state-dir
+      - /state
+      - --job
+      - example-archive
+    volumes:
+      - ./config.example.yaml:/config/config.yaml:ro
+      - ./runtime/rclone.conf:/run/secrets/rclone.conf:ro
+      - ./runtime/input:/data/input:ro
+      - ./runtime/state:/state:rw
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
