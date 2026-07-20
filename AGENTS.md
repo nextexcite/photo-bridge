@@ -32,6 +32,9 @@ commit header as public information.
   destination deletion, or source deletion without an explicit contract change.
 - OCI images are built by GitHub Actions. Never build project images on a local
   macOS workstation.
+- Annotated `vX.Y.Z` Git tags are the release authority. Operators use exact
+  SemVer image tags; digests are integrity evidence and rollback coordinates,
+  not the normal human-facing command surface.
 - Runtime image experiments run only on the operator-designated private Linux
   experiment host through the private operations control plane. Do not record
   that host's identity or coordinates here.

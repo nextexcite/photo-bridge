@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Validate annotated SemVer tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+            echo "invalid SemVer release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          test "$(git cat-file -t "$RELEASE_TAG")" = tag
+          git merge-base --is-ancestor "$RELEASE_TAG^{}" origin/main
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --generate-notes \
+            --title "photo-bridge ${RELEASE_TAG#v}"
+      - name: Summarize release image names
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version=${RELEASE_TAG#v}
+          minor=${version%.*}
+          {
+            echo "## Release"
+            echo
+            echo "Operator image: \`ghcr.io/${GITHUB_REPOSITORY}:${version}\`"
+            echo "Minor channel: \`ghcr.io/${GITHUB_REPOSITORY}:${minor}\`"
+            if [[ "$version" != *-* ]]; then
+              echo "Discovery channel: \`ghcr.io/${GITHUB_REPOSITORY}:latest\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

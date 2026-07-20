@@ -137,6 +137,32 @@ Examples:
 OCI images are built only by GitHub Actions. The repository intentionally
 blocks local image builds through `just image-build`.
 
+Use an exact SemVer tag in operator commands:
+
+```text
+ghcr.io/nextexcite/photo-bridge:0.1.0
+```
+
+The release workflow also publishes the matching minor channel and `latest`
+for discovery. Runtime job definitions should stay on the exact `X.Y.Z` tag;
+the published digest, SBOM, and provenance are verification and rollback
+evidence rather than the primary human-facing reference.
+
+## Releases
+
+Releases follow SemVer and Conventional Commits. An annotated `vX.Y.Z` Git tag
+is the release authority. From a clean, up-to-date `main` branch, run:
+
+```text
+mise exec -- just release v0.1.0
+```
+
+The command runs all local gates, creates and pushes the annotated tag, and
+does not build an image locally. GitHub Actions validates the tag, creates the
+GitHub Release, scans both supported architectures, and publishes the OCI
+image as `0.1.0`, `0.1`, and `latest`. Main-branch builds remain available as
+the explicitly non-release `edge` channel.
+
 ## Google Photos boundary
 
 Google no longer exposes an official unattended API for downloading an

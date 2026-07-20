@@ -1,6 +1,6 @@
 services:
   photo-bridge:
-    image: ${PHOTOBRIDGE_IMAGE:?set an immutable photo-bridge image reference}
+    image: ${PHOTOBRIDGE_IMAGE:-ghcr.io/nextexcite/photo-bridge:0.1.0}
     user: "65532:65532"
     read_only: true
     restart: "no"

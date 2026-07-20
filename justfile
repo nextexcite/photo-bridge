@@ -18,6 +18,10 @@ vet:
 integration:
   scripts/integration-local.sh
 
+# Validate, tag, and publish a SemVer release. Example: just release v0.1.0
+release version:
+  scripts/release.sh "{{version}}"
+
 build:
   mkdir -p bin
   CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/photo-bridge ./cmd/photo-bridge
