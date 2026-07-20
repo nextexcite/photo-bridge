@@ -1,5 +1,5 @@
 [tools]
-go = "1.26.4"
+go = "1.26.5"
 "aqua:gitleaks/gitleaks" = "8.28.0"
 "aqua:rclone/rclone" = "1.74.4"
 
