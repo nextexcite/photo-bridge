@@ -41,6 +41,7 @@ vendor = other
 user = ${WEBDAV_USER}
 pass = ${WEBDAV_PASSWORD}
 EOF
+chmod 600 "$rclone_config"
 
 export PHOTOBRIDGE_RCLONE_CONFIG_FILE="$rclone_config"
 minio_name="photo-bridge-minio-$RANDOM-$RANDOM"
