@@ -33,7 +33,6 @@ access_key_id = ${MINIO_ACCESS_KEY}
 secret_access_key = ${MINIO_SECRET_KEY}
 endpoint = ${MINIO_ENDPOINT}
 region = us-east-1
-no_check_bucket = true
 
 [fixture-webdav]
 type = webdav
