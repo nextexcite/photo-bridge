@@ -24,7 +24,7 @@ while IFS= read -r -d '' file; do
 
   [[ -f "$file" ]] || continue
 
-  if rg -q --pcre2 '(?i)\b(?![A-Z0-9._%+\-]+@(example\.invalid|example\.com|users\.noreply\.github\.com)\b)[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b' "$file"; then
+  if rg -q --pcre2 '(?i)\b(?!(?:[A-Z0-9._%+\-]+@(?:example\.invalid|example\.com|users\.noreply\.github\.com)|noreply@github\.com)\b)[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b' "$file"; then
     echo "public audit: possible non-example email address in $file" >&2
     failures=$((failures + 1))
   fi
@@ -57,7 +57,7 @@ fi
 if git rev-parse --verify HEAD >/dev/null 2>&1; then
   while IFS= read -r commit_email; do
     [[ -n "$commit_email" ]] || continue
-    if [[ "$commit_email" != *@users.noreply.github.com ]]; then
+    if [[ "$commit_email" != *@users.noreply.github.com && "$commit_email" != "noreply@github.com" ]]; then
       echo "public audit: commit history contains a non-noreply author or committer email" >&2
       failures=$((failures + 1))
       break
