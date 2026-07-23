@@ -20,6 +20,7 @@ state="$work_root/state"
 rclone_config="$work_root/rclone.conf"
 source="$work_root/source"
 webdav_root="$work_root/webdav-root"
+webdav_obscured=$(rclone obscure "$WEBDAV_PASSWORD")
 mkdir -p "$source/nested" "$state"
 mkdir -p "$webdav_root"
 printf 'backend alpha\n' > "$source/alpha.txt"
@@ -39,7 +40,7 @@ type = webdav
 url = ${WEBDAV_ENDPOINT}
 vendor = other
 user = ${WEBDAV_USER}
-pass = ${WEBDAV_PASSWORD}
+pass = ${webdav_obscured}
 EOF
 chmod 600 "$rclone_config"
 
