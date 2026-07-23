@@ -400,11 +400,17 @@ func (s Service) resolveVerification(ctx context.Context, job config.Job) (verif
 	}
 	source, err := s.backendHashes(ctx, job.Source)
 	if err != nil {
-		return verificationPlan{}, err
+		if requested == "checksum" {
+			return verificationPlan{}, err
+		}
+		return verificationPlan{requested: requested, method: "size-and-name", strength: "size", fallback: true, args: []string{"--size-only"}}, nil
 	}
 	destination, err := s.backendHashes(ctx, job.Destination)
 	if err != nil {
-		return verificationPlan{}, err
+		if requested == "checksum" {
+			return verificationPlan{}, err
+		}
+		return verificationPlan{requested: requested, method: "size-and-name", strength: "size", fallback: true, args: []string{"--size-only"}}, nil
 	}
 	algorithm := commonHash(source, destination)
 	if algorithm != "" {
