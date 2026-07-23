@@ -34,6 +34,14 @@ photo-bridge status --state-dir /state --job example-archive --json
 photo-bridge version
 ```
 
+During transfers, `run` emits concise progress lines suitable for a terminal or
+service journal. Object names, endpoint identities, and credentials are not
+included; full redacted JSONL remains in the private state directory.
+
+```text
+photo-bridge: phase=transfer progress=50.0% transferred=5.00GiB total=10.00GiB speed=20.00MiB/s eta=4m16s errors=0
+```
+
 Stable exit codes:
 
 | Code | Meaning |

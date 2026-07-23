@@ -227,7 +227,8 @@ func (s Service) runCopy(ctx context.Context, job config.Job, dryRun bool, logPa
 		args = append(args, "--files-from-raw", selectionList)
 	}
 	args = s.withRcloneConfig(args)
-	result, err := s.runLogged(ctx, args, logPath)
+	emitPhase(s.Out, "transfer", "started")
+	result, err := s.runLogged(ctx, args, logPath, "transfer")
 	commandResult := model.CommandResult{
 		Status:   "succeeded",
 		ExitCode: result.ExitCode,
@@ -258,7 +259,8 @@ func (s Service) runVerification(ctx context.Context, job config.Job, logPath, s
 		args = append(args, "--files-from-raw", selectionList)
 	}
 	args = s.withRcloneConfig(args)
-	result, err := s.runLogged(ctx, args, logPath)
+	emitPhase(s.Out, "verification", "started")
+	result, err := s.runLogged(ctx, args, logPath, "verification")
 	verificationResult := model.VerificationResult{
 		Requested: job.Policy.Verification,
 		Method:    verificationMethod(job.Policy.Verification),
@@ -356,20 +358,27 @@ func writeSelectionList(filePath string, paths []string) error {
 	return os.WriteFile(filePath, []byte(strings.Join(paths, "\n")+"\n"), 0o640)
 }
 
-func (s Service) runLogged(ctx context.Context, args []string, logPath string) (process.Result, error) {
+func (s Service) runLogged(ctx context.Context, args []string, logPath, phase string) (process.Result, error) {
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o640)
 	if err != nil {
 		return process.Result{ExitCode: 1, Err: err}, err
 	}
 	defer logFile.Close()
 
-	target := io.Writer(logFile)
+	logWriter := redact.NewLineWriter(logFile)
+	target := io.Writer(logWriter)
+	var progress *progressWriter
 	if s.Out != nil {
-		target = io.MultiWriter(logFile, s.Out)
+		progress = newProgressWriter(logWriter, s.Out, phase)
+		target = progress
 	}
-	writer := redact.NewLineWriter(target)
-	result := s.Executor.Run(ctx, s.RcloneBin, args, writer, writer)
-	flushErr := writer.Flush()
+	result := s.Executor.Run(ctx, s.RcloneBin, args, target, target)
+	flushErr := logWriter.Flush()
+	if progress != nil {
+		if err := progress.Flush(); flushErr == nil {
+			flushErr = err
+		}
+	}
 	if result.Err != nil {
 		return result, result.Err
 	}
@@ -377,6 +386,12 @@ func (s Service) runLogged(ctx context.Context, args []string, logPath string) (
 		return process.Result{ExitCode: 1, Err: flushErr}, flushErr
 	}
 	return result, nil
+}
+
+func emitPhase(out io.Writer, phase, status string) {
+	if out != nil {
+		_, _ = fmt.Fprintf(out, "photo-bridge: phase=%s status=%s\n", phase, status)
+	}
 }
 
 func (s Service) validateRuntime(job config.Job) error {
