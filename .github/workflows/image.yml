@@ -189,7 +189,7 @@ jobs:
           for tag in "${tags[@]}"; do
             docker buildx imagetools create --tag "$IMAGE:$tag" "${candidates[@]}"
           done
-          digest=$(docker buildx imagetools inspect "$IMAGE:$primary_tag" | awk '/^Digest:/{print $2; exit}')
+          digest=$(docker buildx imagetools inspect "$IMAGE:$primary_tag" | awk '/^Digest:/{value=$2} END {if (value == "") exit 1; print value}')
           test -n "$digest"
           {
             echo "digest=$digest"
