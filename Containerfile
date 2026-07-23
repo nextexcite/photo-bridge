@@ -35,8 +35,8 @@ ARG GRPC_VERSION=1.82.1
 
 RUN git init \
     && git remote add origin https://github.com/rclone/rclone.git \
-    && git fetch --depth=1 origin "$RCLONE_COMMIT" \
-    && git checkout --detach FETCH_HEAD \
+    && git fetch --depth=1 origin "refs/tags/v${RCLONE_VERSION}:refs/tags/v${RCLONE_VERSION}" \
+    && git checkout --detach "v${RCLONE_VERSION}" \
     && test "$(git rev-parse HEAD)" = "$RCLONE_COMMIT" \
     && test "$(git describe --tags --exact-match)" = "v${RCLONE_VERSION}" \
     && go mod edit -require="google.golang.org/grpc@v${GRPC_VERSION}" \
