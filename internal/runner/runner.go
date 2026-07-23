@@ -104,12 +104,14 @@ func (s Service) Run(ctx context.Context, job config.Job, options RunOptions) (m
 		return model.RunReport{}, fmt.Errorf("create run: %w", err)
 	}
 	report := newReport(job, runID, started, options.DryRun)
+	observeRSS(&report)
 	report.Manifest.Requested = job.Policy.Integrity.Manifest
 	report.Verification.Requested = job.Policy.Integrity.Verification
 	if err := layout.WriteCurrent(job.Name, report); err != nil {
 		return report, err
 	}
 	update := func(phase string, progress *model.Progress) {
+		observeRSS(&report)
 		report.Phase = phase
 		report.UpdatedAt = s.Now().UTC()
 		if progress != nil {
@@ -153,7 +155,7 @@ func (s Service) Run(ctx context.Context, job config.Job, options RunOptions) (m
 	if err := enforceManifestLimits(job, manifestResult.Entries, manifestResult.Bytes); err != nil {
 		return s.finishFailure(layout, paths, report, job, "limit_exceeded", err)
 	}
-	report.Manifest.Level, report.Manifest.Entries, report.Manifest.Path = manifestResult.Level, manifestResult.Entries, layout.Relative(paths.Manifest)
+	report.Manifest.Level, report.Manifest.Entries, report.Manifest.Path, report.Manifest.TemporaryBytes = manifestResult.Level, manifestResult.Entries, layout.Relative(paths.Manifest), manifestResult.TemporaryBytes
 	update("verification-preflight", nil)
 	verification, err := s.resolveVerification(ctx, job)
 	if err != nil {
@@ -302,9 +304,11 @@ func (s Service) Verify(ctx context.Context, job config.Job) (model.RunReport, e
 		return model.RunReport{}, err
 	}
 	report := newReport(job, runID, started, false)
+	observeRSS(&report)
 	report.Operation, report.Manifest, report.Transfer = "verify", model.ManifestResult{Requested: job.Policy.Integrity.Manifest, Level: "persisted"}, model.CommandResult{Status: "skipped", ExitCode: 0}
 	_ = layout.WriteCurrent(job.Name, report)
 	update := func(phase string, progress *model.Progress) {
+		observeRSS(&report)
 		report.Phase = phase
 		if progress != nil {
 			report.Progress = progress
@@ -677,6 +681,14 @@ func (s Service) finishFailure(layout state.Layout, paths state.RunPaths, report
 }
 func (s Service) finish(layout state.Layout, paths state.RunPaths, report model.RunReport, job config.Job, runErr error) (model.RunReport, error) {
 	report.FinishedAt = s.Now().UTC()
+	observeRSS(&report)
+	report.Runtime.DurationMilliseconds = report.FinishedAt.Sub(report.StartedAt).Milliseconds()
+	if report.Progress != nil {
+		report.Runtime.TransferredBytes = report.Progress.Transferred
+		if report.Runtime.DurationMilliseconds > 0 {
+			report.Runtime.AverageBytesPerSecond = float64(report.Runtime.TransferredBytes) / (float64(report.Runtime.DurationMilliseconds) / 1000)
+		}
+	}
 	if err := layout.WriteReport(report.Job, paths, report); err != nil {
 		if runErr != nil {
 			return report, fmt.Errorf("%v; additionally failed to write report: %w", runErr, err)
@@ -700,7 +712,25 @@ func (s Service) finish(layout state.Layout, paths state.RunPaths, report model.
 	return report, runErr
 }
 func newReport(job config.Job, runID string, started time.Time, dryRun bool) model.RunReport {
-	return model.RunReport{SchemaVersion: model.ReportSchemaVersion, RunID: runID, Job: job.Name, Operation: job.Operation, Status: "running", Phase: "starting", StartedAt: started, UpdatedAt: started, SourceDriver: job.Source.Driver, DestinationDriver: job.Destination.Driver, NonDestructive: true, DryRun: dryRun}
+	return model.RunReport{SchemaVersion: model.ReportSchemaVersion, RunID: runID, Job: job.Name, Operation: job.Operation, Status: "running", Phase: "starting", StartedAt: started, UpdatedAt: started, SourceDriver: job.Source.Driver, DestinationDriver: job.Destination.Driver, NonDestructive: true, DryRun: dryRun, Runtime: model.RuntimeMetrics{ConfiguredBufferCeiling: job.Policy.MaxBufferMemoryBytes()}}
+}
+
+func observeRSS(report *model.RunReport) {
+	data, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "VmRSS:" {
+			continue
+		}
+		kilobytes, err := strconv.ParseInt(fields[1], 10, 64)
+		if err == nil && kilobytes > 0 && kilobytes*1024 > report.Runtime.PeakProcessRSSBytes {
+			report.Runtime.PeakProcessRSSBytes = kilobytes * 1024
+		}
+		return
+	}
 }
 func WriteJSON(w io.Writer, value any) error {
 	encoder := json.NewEncoder(w)

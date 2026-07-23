@@ -1,6 +1,6 @@
 services:
   photo-bridge:
-    image: ${PHOTOBRIDGE_IMAGE:-ghcr.io/nextexcite/photo-bridge:0.1.3}
+    image: ${PHOTOBRIDGE_IMAGE:-ghcr.io/nextexcite/photo-bridge:0.1.4}
     user: "65532:65532"
     read_only: true
     restart: "no"

@@ -32,6 +32,7 @@ type RunReport struct {
 	Selection         *SelectionResult   `json:"selection,omitempty"`
 	Progress          *Progress          `json:"progress,omitempty"`
 	Retention         RetentionResult    `json:"retention,omitempty"`
+	Runtime           RuntimeMetrics     `json:"runtime,omitempty"`
 	Error             string             `json:"error,omitempty"`
 }
 type Progress struct {
@@ -60,10 +61,18 @@ type SelectionResult struct {
 	ManualReady    bool      `json:"manualReady,omitempty"`
 }
 type ManifestResult struct {
-	Requested string `json:"requested"`
-	Level     string `json:"level"`
-	Entries   int    `json:"entries"`
-	Path      string `json:"path,omitempty"`
+	Requested      string `json:"requested"`
+	Level          string `json:"level"`
+	Entries        int    `json:"entries"`
+	Path           string `json:"path,omitempty"`
+	TemporaryBytes int64  `json:"temporaryMetadataBytes,omitempty"`
+}
+type RuntimeMetrics struct {
+	DurationMilliseconds    int64   `json:"durationMilliseconds,omitempty"`
+	TransferredBytes        int64   `json:"transferredBytes,omitempty"`
+	AverageBytesPerSecond   float64 `json:"averageBytesPerSecond,omitempty"`
+	PeakProcessRSSBytes     int64   `json:"peakProcessRSSBytes,omitempty"`
+	ConfiguredBufferCeiling int64   `json:"configuredBufferCeilingBytes,omitempty"`
 }
 type CommandResult struct {
 	Status   string `json:"status"`

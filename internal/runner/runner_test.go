@@ -76,6 +76,12 @@ func TestRunUsesCopyAndOneWayCheck(t *testing.T) {
 	if report.Status != "succeeded" || !report.NonDestructive {
 		t.Fatalf("unexpected report: %#v", report)
 	}
+	if report.Runtime.ConfiguredBufferCeiling != 256<<20 {
+		t.Fatalf("unexpected runtime buffer ceiling: %#v", report.Runtime)
+	}
+	if report.Manifest.TemporaryBytes < 0 {
+		t.Fatalf("invalid temporary metadata accounting: %#v", report.Manifest)
+	}
 	var copyCall, checkCall []string
 	for _, call := range executor.calls {
 		if len(call) > 1 && call[1] == "copy" {
