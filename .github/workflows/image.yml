@@ -20,6 +20,11 @@ on:
       - internal/**
       - .github/workflows/image.yml
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Annotated SemVer tag to recover and publish
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -35,7 +40,61 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      version: ${{ steps.resolve.outputs.version }}
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+      is_release: ${{ steps.resolve.outputs.is_release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release_tag || github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - id: resolve
+        env:
+          DISPATCH_RELEASE_TAG: ${{ inputs.release_tag }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          release_tag=
+          if [[ -n "$DISPATCH_RELEASE_TAG" ]]; then
+            release_tag=$DISPATCH_RELEASE_TAG
+          elif [[ "$REF" == refs/tags/v* ]]; then
+            release_tag=$REF_NAME
+          fi
+
+          if [[ -n "$release_tag" ]]; then
+            test "$(git cat-file -t "$release_tag")" = tag
+            git merge-base --is-ancestor "$release_tag^{}" origin/main
+            version=${release_tag#v}
+            if ! [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+              echo "invalid SemVer tag: $release_tag" >&2
+              exit 1
+            fi
+            source_sha=$(git rev-parse "${release_tag}^{}")
+            is_release=true
+          else
+            source_sha=$SHA
+            version=$REF_NAME
+            is_release=false
+          fi
+
+          {
+            echo "source_sha=$source_sha"
+            echo "version=$version"
+            echo "release_tag=$release_tag"
+            echo "is_release=$is_release"
+          } >> "$GITHUB_OUTPUT"
+
   candidate:
+    needs: resolve
     strategy:
       fail-fast: false
       matrix:
@@ -48,6 +107,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.source_sha }}
+          persist-credentials: false
       - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       - name: Log in for candidate publication
@@ -71,13 +133,18 @@ jobs:
           sbom: ${{ github.event_name != 'pull_request' }}
           provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
           build-args: |
-            VERSION=${{ github.ref_name }}
-            VCS_REF=${{ github.sha }}
+            VERSION=${{ needs.resolve.outputs.version }}
+            VCS_REF=${{ needs.resolve.outputs.source_sha }}
             BUILD_DATE=1970-01-01T00:00:00Z
+      - name: Pull the exact remote candidate for scanning
+        if: github.event_name != 'pull_request'
+        run: |
+          docker pull --platform '${{ matrix.platform }}' \
+            '${{ format('{0}:candidate-{1}-{2}', env.IMAGE, needs.resolve.outputs.source_sha, matrix.suffix) }}'
       - name: Scan the exact candidate image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ${{ github.event_name == 'pull_request' && format('photo-bridge:pr-{0}', matrix.suffix) || format('{0}:candidate-{1}-{2}', env.IMAGE, github.sha, matrix.suffix) }}
+          image-ref: ${{ github.event_name == 'pull_request' && format('photo-bridge:pr-{0}', matrix.suffix) || format('{0}:candidate-{1}-{2}', env.IMAGE, needs.resolve.outputs.source_sha, matrix.suffix) }}
           format: table
           exit-code: '1'
           severity: CRITICAL,HIGH
@@ -85,11 +152,11 @@ jobs:
       - name: Smoke the exact candidate image
         run: |
           docker run --rm --platform '${{ matrix.platform }}' \
-            '${{ github.event_name == 'pull_request' && format('photo-bridge:pr-{0}', matrix.suffix) || format('{0}:candidate-{1}-{2}', env.IMAGE, github.sha, matrix.suffix) }}' version
+            '${{ github.event_name == 'pull_request' && format('photo-bridge:pr-{0}', matrix.suffix) || format('{0}:candidate-{1}-{2}', env.IMAGE, needs.resolve.outputs.source_sha, matrix.suffix) }}' version
 
   promote:
     if: github.event_name != 'pull_request'
-    needs: candidate
+    needs: [resolve, candidate]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     outputs:
@@ -104,18 +171,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: promote
         env:
-          REF: ${{ github.ref }}
-          REF_NAME: ${{ github.ref_name }}
-          SHA: ${{ github.sha }}
+          IS_RELEASE: ${{ needs.resolve.outputs.is_release }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          SHA: ${{ needs.resolve.outputs.source_sha }}
         run: |
           set -euo pipefail
           candidates=("$IMAGE:candidate-$SHA-amd64" "$IMAGE:candidate-$SHA-arm64")
-          if [[ "$REF" == refs/tags/v* ]]; then
-            version=${REF_NAME#v}
-            if ! [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
-              echo "invalid SemVer tag: $REF_NAME" >&2
-              exit 1
-            fi
+          if [[ "$IS_RELEASE" == true ]]; then
+            version=${RELEASE_TAG#v}
             minor=${version%.*}
             tags=("$version" "$minor")
             [[ "$version" == *-* ]] || tags+=(latest)
@@ -145,8 +208,8 @@ jobs:
           push-to-registry: true
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [promote, attest]
+    if: needs.resolve.outputs.is_release == 'true'
+    needs: [resolve, promote, attest]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -157,7 +220,7 @@ jobs:
           persist-credentials: false
       - name: Validate annotated tag on main
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
         run: |
           set -euo pipefail
           test "$(git cat-file -t "$RELEASE_TAG")" = tag
@@ -165,7 +228,7 @@ jobs:
       - name: Create release after exact-digest verification
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
           DIGEST: ${{ needs.promote.outputs.digest }}
           PRIMARY_TAG: ${{ needs.promote.outputs.primary_tag }}
         run: |

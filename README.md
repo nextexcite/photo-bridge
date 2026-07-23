@@ -175,7 +175,7 @@ Podman Quadlet, or another external controller owns scheduling.
 - [`deploy/photo-bridge.timer.example`](deploy/photo-bridge.timer.example)
 
 Images are built only by GitHub Actions. Operators use exact SemVer tags, for
-example `ghcr.io/nextexcite/photo-bridge:0.1.3`; a digest, SBOM, and provenance
+example `ghcr.io/nextexcite/photo-bridge:0.1.4`; a digest, SBOM, and provenance
 are integrity evidence and rollback coordinates. The release pipeline builds
 each architecture once, scans and smokes those candidate digests, creates the
 multi-architecture index, attests it, promotes SemVer channels, then creates
@@ -184,7 +184,7 @@ the GitHub Release. A failed scan never produces a release.
 From clean, up-to-date `main`:
 
 ```text
-mise exec -- just release v0.1.3
+mise exec -- just release v0.1.4
 ```
 
 ## Development

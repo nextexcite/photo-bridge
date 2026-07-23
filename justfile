@@ -22,7 +22,7 @@ integration:
 integration-backends:
   scripts/integration-backends.sh
 
-# Validate, tag, and publish a SemVer release. Example: just release v0.1.3
+# Validate, tag, and publish a SemVer release. Example: just release v0.1.4
 release version:
   scripts/release.sh "{{version}}"
 

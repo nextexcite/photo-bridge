@@ -4,7 +4,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Container]
-Image=ghcr.io/nextexcite/photo-bridge:0.1.3
+Image=ghcr.io/nextexcite/photo-bridge:0.1.4
 ContainerName=photo-bridge-example
 Exec=run --config /config/config.yaml --state-dir /state --job example-archive
 User=65532:65532
