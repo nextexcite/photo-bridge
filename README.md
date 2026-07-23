@@ -1,25 +1,26 @@
 # photo-bridge
 
-`photo-bridge` is a small, non-destructive archival copy runner built around
-[rclone](https://rclone.org/). It gives repeatable copy jobs a value-free YAML
-contract, source manifests, one-way verification, locks, stable exit codes, and
-redacted JSON reports.
+`photo-bridge` is a small, non-destructive archival-copy runner built around
+[rclone](https://rclone.org/). It gives repeatable jobs a value-free YAML
+contract, pinned manifests, one-way verification, locks, redacted reports, and
+terminal progress.
 
-The project is deliberately not a photo gallery and does not reimplement cloud
-storage protocols. It treats local disks, NAS mounts, Google Drive, S3,
-WebDAV, SFTP, and other rclone backends as configurable endpoints.
+It is not a photo gallery and does not reimplement storage protocols. Local
+disks, NAS mounts, Google Drive, S3, WebDAV, SFTP, and other rclone backends
+are endpoints configured outside this public repository.
 
 ## Safety model
 
-- The only v0.1 transfer operation is `rclone copy`.
-- Destination-only objects are never removed.
-- Source files are never moved or deleted.
-- Every run creates a deterministic JSONL source manifest before transfer.
-- Verification uses `rclone check --one-way`, so unrelated destination files
-  do not fail or disappear.
-- Configuration and reports never contain provider credentials.
-- Live credentials, media, reports, and personal deployment configuration must
-  stay outside this public repository.
+- The only transfer operation is `rclone copy`: it never removes, moves, or
+  synchronizes deletions.
+- Source identities are pinned by path, size, modification time, and available
+  hashes. They are revalidated before copy and before verification.
+- Destination-only objects are not checked as failures and are never removed.
+- Reports and plans contain safe counts and methods, not provider identities,
+  object names, or credentials. Private state can still reveal timing and
+  filenames and must remain private.
+- `v1alpha2` is a hard cut. `v1alpha1` YAML, reports, and state roots are
+  rejected; do not point this release at a legacy state directory.
 
 ## Commands
 
@@ -31,16 +32,19 @@ photo-bridge run --config /config/config.yaml --state-dir /state --job example-a
 photo-bridge run --config /config/config.yaml --state-dir /state --job example-takeout --takeout-ready
 photo-bridge verify --config /config/config.yaml --state-dir /state --job example-archive
 photo-bridge status --state-dir /state --job example-archive --json
+photo-bridge state prune --state-dir /state --job example-archive --dry-run --json
 photo-bridge version
 ```
 
-During transfers, `run` emits concise progress lines suitable for a terminal or
-service journal. Object names, endpoint identities, and credentials are not
-included; full redacted JSONL remains in the private state directory.
+`run` and `verify` write exactly one JSON report to stdout. Sanitized human
+progress is written to stderr, suitable for a terminal or service journal:
 
 ```text
 photo-bridge: phase=transfer progress=50.0% transferred=5.00GiB total=10.00GiB speed=20.00MiB/s eta=4m16s errors=0
 ```
+
+`status --json` returns `current.json` while a job is active, including phase,
+progress, speed, ETA, and last-update time. When idle it returns `latest.json`.
 
 Stable exit codes:
 
@@ -49,20 +53,22 @@ Stable exit codes:
 | `0` | Success |
 | `2` | Invalid configuration or invocation |
 | `3` | Transfer failed or may be partial |
-| `4` | Verification failed |
+| `4` | Verification or required checksum capability failed |
 | `5` | Another process holds the job lock |
 | `6` | No new complete Takeout export is ready yet |
-| `7` | Takeout selection is ambiguous or invalid |
+| `7` | Takeout selection or pinned identity is invalid |
+| `8` | Configured object or byte limit exceeded before transfer |
+| `9` | Maximum job duration exceeded |
 | `10` | Internal/runtime failure |
 
-## Configuration
+## `v1alpha2` configuration
 
-Start from [`config.example.yaml`](config.example.yaml). Filesystem paths must
-be absolute. An rclone endpoint names a remote already defined in a separately
-mounted rclone configuration file.
+Start with [`config.example.yaml`](config.example.yaml). Filesystem paths are
+absolute. An rclone endpoint names a remote that is already present in a
+separately mounted rclone config.
 
 ```yaml
-apiVersion: photo-bridge/v1alpha1
+apiVersion: photo-bridge/v1alpha2
 
 jobs:
   - name: example-archive
@@ -75,39 +81,71 @@ jobs:
       remote: archive-remote
       path: photos/account-a
     policy:
-      manifest: sha256
-      verification: auto
-      transfers: 8
-      retries: 3
+      integrity:
+        manifest: auto
+        verification: auto
+        allowEmpty: false
+      transfer:
+        transfers: 8
+        checkers: 8
+        bufferSize: 16MiB
+        maxBufferMemory: 256MiB
+      limits:
+        maxDuration: 0s
+        maxFiles: 0
+        maxBytes: 0
+      progressInterval: 5s
+      retention:
+        mode: automatic
+        maxAge: 720h
+        minRuns: 5
 ```
 
-Supported manifest policies:
+Verification is resolved before any destination write:
 
-- `sha256`: require SHA-256. Filesystem sources are read and hashed locally;
-  rclone sources must expose SHA-256.
-- `auto`: prefer SHA-256, then a deterministic provider hash, then metadata.
-- `metadata`: record path, size, and modification time only.
+- `checksum` requires a common advertised hash or fails.
+- `auto` uses a common hash when possible, otherwise records an explicit
+  size/name fallback.
+- `size` compares pinned paths and sizes.
+- `download` reads both sides and compares contents; use it only when its
+  extra provider bandwidth is acceptable.
 
-Supported verification policies:
+`maxBufferMemory` bounds rclone transfer buffers, not total process RSS. No
+VFS or disk cache is enabled. Zero limits mean unlimited. `maxFiles` and
+`maxBytes` are checked before destination writes. `maxDuration` ends the run
+with exit `9` while preserving resumable state.
 
-- `auto`: rclone uses a common hash when available and size otherwise.
-- `checksum`: require checksum comparison.
-- `size`: compare names and sizes only.
+Automatic retention preserves every run less than `maxAge` old and always the
+newest `minRuns` per job. It never removes active state, Takeout pins,
+`latest.json`, credentials, source data, or destination data. Use `state
+prune --dry-run --json` to preview maintenance; retention warnings do not
+change a transfer result.
 
 Set `PHOTOBRIDGE_RCLONE_CONFIG_FILE` when either endpoint uses the `rclone`
-driver. The file must be regular and not world-accessible. The committed
-[`secret-contract.yaml`](secret-contract.yaml) describes delivery without
-containing values.
+driver. It must be a regular, non-world-readable runtime-mounted file. The
+committed [`secret-contract.yaml`](secret-contract.yaml) describes delivery
+without containing values.
+
+## Data path
+
+`plan` reports an intentionally high-level transport classification:
+
+| `dataPath` | Meaning |
+|---|---|
+| `host-local` | Both endpoints are host-local filesystem paths. |
+| `host-upload` | Local source streams to a remote destination. |
+| `host-download` | Remote source streams to local storage. |
+| `host-relay` | Bytes stream through the job host between remote endpoints. |
+
+`serverSideCopy` is `false` in this release. A remote-to-remote job is a
+host-relay: its host consumes both ingress and egress bandwidth but does not
+stage a media cache on disk.
 
 ## Google Takeout from Drive
 
-For a first complete Google Photos archive, request Google Takeout with
-**Add to Drive** and choose the largest practical archive size to reduce the
-number of ZIPs. Multiple ZIPs are fully supported.
-
-Use a direct rclone source for cloud-only operation; an rclone FUSE mount is
-unnecessary and adds another failure boundary. If a mount is already present,
-the same selector works with a `filesystem` source.
+For a first full Google Photos archive, request Google Takeout with **Add to
+Drive** and choose the largest practical archive size. One ZIP is preferred;
+numbered sets are supported.
 
 ```yaml
 source:
@@ -119,75 +157,35 @@ source:
     settleFor: 2h
 ```
 
-A normal scheduled run records the latest candidate and exits `6` until its
-exact paths, sizes, and modification times have remained unchanged for the
-settle window. After the Google completion email arrives, run once with
-`--takeout-ready` to bypass only that wait. It still rejects duplicate names,
-invalid numbering, and missing archive parts.
-
-The accepted file set is pinned before copy. Interrupted reruns keep using the
-same set even if a newer export appears. A successful verified run marks it
-complete; later polls return `6` until another export appears. See
+A normal scheduled run observes the newest candidate and exits `6` until its
+exact identity is stable for the settle window. `--takeout-ready` bypasses only
+that wait after the provider completion signal; structural and identity checks
+remain mandatory. The selected set is private active state, reused after an
+interruption, and only marked complete after verification. See
 [`docs/takeout-drive-workflow.md`](docs/takeout-drive-workflow.md).
 
-## OCI operation
+## OCI operation and releases
 
-The image is a one-shot, non-root job runner. It has no scheduler, dashboard,
-telemetry, FUSE mount, Docker socket, or inbound listener. Schedule it with
-host systemd, a Podman Quadlet timer, or another external job controller.
-
-Examples:
+The image is a one-shot, non-root job runner: no scheduler, dashboard,
+telemetry, FUSE mount, Docker socket, or inbound listener. Host systemd,
+Podman Quadlet, or another external controller owns scheduling.
 
 - [`compose.example.yaml`](compose.example.yaml)
 - [`deploy/photo-bridge.container.example`](deploy/photo-bridge.container.example)
 - [`deploy/photo-bridge.timer.example`](deploy/photo-bridge.timer.example)
 
-OCI images are built only by GitHub Actions. The repository intentionally
-blocks local image builds through `just image-build`.
+Images are built only by GitHub Actions. Operators use exact SemVer tags, for
+example `ghcr.io/nextexcite/photo-bridge:0.1.3`; a digest, SBOM, and provenance
+are integrity evidence and rollback coordinates. The release pipeline builds
+each architecture once, scans and smokes those candidate digests, creates the
+multi-architecture index, attests it, promotes SemVer channels, then creates
+the GitHub Release. A failed scan never produces a release.
 
-Use an exact SemVer tag in operator commands:
-
-```text
-ghcr.io/nextexcite/photo-bridge:0.1.0
-```
-
-The release workflow also publishes the matching minor channel and `latest`
-for discovery. Runtime job definitions should stay on the exact `X.Y.Z` tag;
-the published digest, SBOM, and provenance are verification and rollback
-evidence rather than the primary human-facing reference.
-
-## Releases
-
-Releases follow SemVer and Conventional Commits. An annotated `vX.Y.Z` Git tag
-is the release authority. From a clean, up-to-date `main` branch, run:
+From clean, up-to-date `main`:
 
 ```text
-mise exec -- just release v0.1.0
+mise exec -- just release v0.1.3
 ```
-
-The command runs all local gates, creates and pushes the annotated tag, and
-does not build an image locally. GitHub Actions validates the tag, creates the
-GitHub Release, scans both supported architectures, and publishes the OCI
-image as `0.1.0`, `0.1`, and `latest`. Main-branch builds remain available as
-the explicitly non-release `edge` channel.
-
-## Google Photos boundary
-
-Google no longer exposes an official unattended API for downloading an
-existing full Google Photos library. This project therefore keeps download and
-archive transport separate:
-
-1. Run the unmodified community
-   [`spraot/gphotos-sync`](https://github.com/spraot/gphotos-sync) container as
-   an isolated source job.
-2. Point a normal filesystem-source `photo-bridge` job at its download landing
-   directory.
-3. Keep Google Takeout as the authoritative baseline and album record; the
-   Drive selector above handles its archive transport.
-
-The browser profile and any album identifiers are private runtime state. They
-must never be committed here. See
-[`docs/gphotos-sync-source.md`](docs/gphotos-sync-source.md).
 
 ## Development
 
@@ -195,18 +193,13 @@ must never be committed here. See
 mise install
 just check
 just integration
+just integration-backends
 ```
 
-Do not put live provider credentials into public CI. Integration tests use only
-temporary local files; additional S3 and WebDAV fixtures will use disposable
-credential-free containers in later increments.
-
-## Roadmap
-
-- `v0.1`: configurable filesystem/rclone archival copy.
-- `v0.2`: documented and canaried `spraot/gphotos-sync` source lane.
-- `v0.3`: bulk Google Photos upload through the rclone Google Photos backend.
-- `v0.4`: restic snapshots and a Takeout album-membership catalog.
+Public CI has no provider credentials. The backend integration lane uses
+disposable local MinIO and WebDAV services. `just public-audit` runs gitleaks
+against the worktree and complete history, validates commit metadata, rejects
+unsafe artifact shapes, and includes adversarial self-tests.
 
 ## License
 

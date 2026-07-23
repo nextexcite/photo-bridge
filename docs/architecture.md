@@ -2,67 +2,84 @@
 
 ## Responsibility split
 
-`photo-bridge` owns the operation contract and evidence around a transfer:
+`photo-bridge` owns the copy contract and evidence around one job:
 
 ```text
-value-free job YAML
-        |
-        v
-validate -> lock -> manifest -> rclone copy -> rclone check --one-way -> report
+validate -> lock -> pin identities -> manifest -> copy -> verify -> report -> retain state
 ```
 
-Rclone owns filesystem and cloud protocol behavior. Host systemd or another
-external scheduler owns execution timing. A private operations control plane
-owns live credentials, job instances, host selection, and recovery.
+Rclone owns filesystem and cloud protocols. An external scheduler owns timing.
+A private operations control plane owns live credentials, job instances, host
+selection, and recovery.
 
-## Drivers
+## Drivers and data path
 
-The v0.1 driver registry is compile-time and deliberately small:
+The compile-time driver registry is deliberately small:
 
 | Driver | Configuration | Transfer implementation |
 |---|---|---|
-| `filesystem` | Absolute path | Rclone local backend |
-| `rclone` | Remote name and provider path | Configured rclone backend |
+| `filesystem` | Absolute path | rclone local backend |
+| `rclone` | Remote name and provider path | configured rclone backend |
 
-Adding a new cloud provider normally means configuring another rclone remote,
-not adding Go code. A new Go driver is justified only when its semantics cannot
-be represented safely through rclone.
+Provider additions normally mean another rclone remote, not Go code. The plan
+does not expose endpoint names. It instead classifies the physical data path as
+`host-local`, `host-upload`, `host-download`, or `host-relay`. All remote to
+remote copies currently use `host-relay`; `serverSideCopy` remains false.
 
-## State model
+## `v1alpha2` state model
 
-State is inspectable and filesystem-based:
+State is private, inspectable, and schema-marked. A nonempty root that is not a
+`v1alpha2` root is rejected rather than interpreted as legacy state.
 
 ```text
-/state/jobs/<job>/
-  job.lock
-  latest.json
-  takeout/
-    observation.json
-    active.json
-    completed.json
-  runs/<run-id>/
-    manifest.jsonl
-    selection.txt
-    transfer.log
-    verification.log
-    report.json
+/state/
+  schema.json
+  jobs/<job>/
+    job.lock
+    current.json
+    latest.json
+    takeout/
+      observation.json
+      active.json
+      completed.json
+    runs/<run-id>/
+      manifest.jsonl
+      selection.jsonl
+      transfer.log
+      verification.log
+      report.json
+      spool/                 # temporary bounded-manifest chunks
 ```
 
-Reports refer to state artifacts with paths relative to `/state`. Endpoint
-paths and remote names are intentionally omitted from plans and reports.
+`current.json` is updated at the configured progress cadence and removed only
+after a terminal report is written. A lock-less current state is reconciled as
+interrupted on the next invocation. Reports use
+`photo-bridge.report/v1alpha2`, have immutable run IDs, and include only safe
+counts, timings, data-path classification, requested/effective verification,
+and retention summary.
 
-## Failure model
+## Integrity and recovery
 
-Rerunning a failed job is the recovery operation. Rclone copy skips unchanged
-objects and never removes destination-only objects. A failed transfer receives
-exit code `3` because some files may already have completed. Verification is a
-separate one-way check and receives exit code `4`.
+Selected objects have a persisted identity: path, size, modification time, and
+any available provider hashes. The runner revalidates the identity before copy
+and verification. A changed or missing object fails rather than silently
+mixing an export. `checksum` requires a common hash; `auto` reports an explicit
+fallback when only size/name comparison is possible.
 
-The source manifest is written before transfer, so an operator can determine
-which source view a run attempted to archive.
+Rerunning a failed copy is the recovery operation. `rclone copy` skips
+unchanged objects and never removes destination-only objects. The source
+manifest is written before transfer, so an operator can determine the exact
+source view attempted without placing source identities in public reports.
 
-For a Takeout source, `active.json` is a write-ahead pin. Transfer and one-way
-verification both receive the corresponding `--files-from-raw` list. The pin
-is replaced by `completed.json` only after verification succeeds. Provider
-paths stay in private state and are summarized only as counts and byte totals
-in the run report.
+For a Takeout source, `active.json` is a write-ahead pin. Both copy and
+verification receive its filtered list. It becomes `completed.json` only after
+successful verification. Retention never removes any Takeout selector state.
+
+## Resource boundaries
+
+The manifest pipeline streams source listings. It holds at most 64 MiB of
+encoded metadata before spilling sorted chunks under the run directory, then
+merges deterministic JSONL and removes spools on every terminal path. Rclone
+transfer settings are structured configuration, not arbitrary arguments.
+`maxBufferMemory` limits rclone buffers rather than total process RSS; disk and
+VFS caches are disabled.

@@ -12,10 +12,17 @@ on:
   push:
     branches: [main]
     tags: ['v*.*.*']
+    paths:
+      - Containerfile
+      - go.mod
+      - go.sum
+      - cmd/**
+      - internal/**
+      - .github/workflows/image.yml
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   packages: write
   id-token: write
   attestations: write
@@ -23,87 +30,145 @@ permissions:
 env:
   IMAGE: ghcr.io/${{ github.repository }}
 
+concurrency:
+  group: oci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  scan:
+  candidate:
     strategy:
       fail-fast: false
       matrix:
-        platform: [linux/amd64, linux/arm64]
         include:
           - platform: linux/amd64
             suffix: amd64
           - platform: linux/arm64
             suffix: arm64
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      - name: Build test image on GitHub runner
+      - name: Log in for candidate publication
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: Containerfile
           platforms: ${{ matrix.platform }}
-          load: true
-          push: false
-          tags: photo-bridge:test-${{ matrix.suffix }}
+          load: ${{ github.event_name == 'pull_request' }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ github.event_name == 'pull_request' && format('photo-bridge:pr-{0}', matrix.suffix) || format('{0}:candidate-{1}-{2}', env.IMAGE, github.sha, matrix.suffix) }}
+          cache-from: type=gha,scope=oci-${{ matrix.suffix }}
+          cache-to: type=gha,mode=max,scope=oci-${{ matrix.suffix }}
+          sbom: ${{ github.event_name != 'pull_request' }}
+          provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
           build-args: |
             VERSION=${{ github.ref_name }}
             VCS_REF=${{ github.sha }}
             BUILD_DATE=1970-01-01T00:00:00Z
-      - name: Scan image
+      - name: Scan the exact candidate image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: photo-bridge:test-${{ matrix.suffix }}
+          image-ref: ${{ github.event_name == 'pull_request' && format('photo-bridge:pr-{0}', matrix.suffix) || format('{0}:candidate-{1}-{2}', env.IMAGE, github.sha, matrix.suffix) }}
           format: table
           exit-code: '1'
           severity: CRITICAL,HIGH
           ignore-unfixed: true
+      - name: Smoke the exact candidate image
+        run: |
+          docker run --rm --platform '${{ matrix.platform }}' \
+            '${{ github.event_name == 'pull_request' && format('photo-bridge:pr-{0}', matrix.suffix) || format('{0}:candidate-{1}-{2}', env.IMAGE, github.sha, matrix.suffix) }}' version
 
-  publish:
-    needs: scan
+  promote:
     if: github.event_name != 'pull_request'
+    needs: candidate
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     outputs:
-      digest: ${{ steps.build.outputs.digest }}
+      digest: ${{ steps.promote.outputs.digest }}
+      primary_tag: ${{ steps.promote.outputs.primary_tag }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - id: metadata
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: ${{ env.IMAGE }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha
-            type=raw,value=edge,enable={{is_default_branch}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') }}
-      - id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          file: Containerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.metadata.outputs.tags }}
-          labels: ${{ steps.metadata.outputs.labels }}
-          sbom: true
-          provenance: mode=max
-          build-args: |
-            VERSION=${{ github.ref_name }}
-            VCS_REF=${{ github.sha }}
-            BUILD_DATE=1970-01-01T00:00:00Z
-      - name: Attest published image
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+      - id: promote
+        env:
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          candidates=("$IMAGE:candidate-$SHA-amd64" "$IMAGE:candidate-$SHA-arm64")
+          if [[ "$REF" == refs/tags/v* ]]; then
+            version=${REF_NAME#v}
+            if ! [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+              echo "invalid SemVer tag: $REF_NAME" >&2
+              exit 1
+            fi
+            minor=${version%.*}
+            tags=("$version" "$minor")
+            [[ "$version" == *-* ]] || tags+=(latest)
+          else
+            tags=(edge)
+          fi
+          primary_tag=${tags[0]}
+          for tag in "${tags[@]}"; do
+            docker buildx imagetools create --tag "$IMAGE:$tag" "${candidates[@]}"
+          done
+          digest=$(docker buildx imagetools inspect "$IMAGE:$primary_tag" --format '{{.Digest}}')
+          test -n "$digest"
+          {
+            echo "digest=$digest"
+            echo "primary_tag=$primary_tag"
+          } >> "$GITHUB_OUTPUT"
+
+  attest:
+    needs: promote
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-name: ${{ env.IMAGE }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ needs.promote.outputs.digest }}
           push-to-registry: true
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [promote, attest]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Validate annotated tag on main
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          test "$(git cat-file -t "$RELEASE_TAG")" = tag
+          git merge-base --is-ancestor "$RELEASE_TAG^{}" origin/main
+      - name: Create release after exact-digest verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          DIGEST: ${{ needs.promote.outputs.digest }}
+          PRIMARY_TAG: ${{ needs.promote.outputs.primary_tag }}
+        run: |
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --generate-notes --title "photo-bridge ${RELEASE_TAG#v}" \
+            --notes "OCI image: \`$IMAGE:$PRIMARY_TAG\`\n\nPublished index digest: \`$DIGEST\`"

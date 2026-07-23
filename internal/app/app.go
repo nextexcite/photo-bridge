@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/nextexcite/photo-bridge/internal/buildinfo"
 	"github.com/nextexcite/photo-bridge/internal/config"
@@ -26,6 +27,8 @@ const (
 	ExitLocked       = 5
 	ExitWaiting      = 6
 	ExitSelection    = 7
+	ExitLimit        = 8
+	ExitTimeout      = 9
 	ExitInternal     = 10
 )
 
@@ -62,6 +65,8 @@ func (a Application) Run(ctx context.Context, args []string) int {
 		err = a.runVerify(ctx, args[1:])
 	case "status":
 		err = a.runStatus(args[1:])
+	case "state":
+		err = a.runState(args[1:])
 	case "version":
 		err = json.NewEncoder(a.Out).Encode(buildinfo.Current())
 	case "help", "--help", "-h":
@@ -170,13 +175,48 @@ func (a Application) runStatus(args []string) error {
 	return err
 }
 
+func (a Application) runState(args []string) error {
+	if len(args) == 0 || args[0] != "prune" {
+		return errors.New("usage: photo-bridge state prune --config PATH --state-dir PATH --job NAME [--dry-run] [--json]")
+	}
+	flags := newFlagSet("state prune", a.Err)
+	configPath := flags.String("config", defaultConfigPath(), "configuration path")
+	stateDir := flags.String("state-dir", defaultStateDir(), "state directory")
+	jobName := flags.String("job", "", "job name")
+	dryRun := flags.Bool("dry-run", false, "preview retention deletion")
+	jsonOutput := flags.Bool("json", false, "emit JSON")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	job, err := loadJob(*configPath, *jobName)
+	if err != nil {
+		return err
+	}
+	layout := state.Layout{Root: *stateDir}
+	if err := layout.Ensure(); err != nil {
+		return err
+	}
+	if job.Policy.Retention.Mode != "automatic" {
+		return errors.New("state prune requires policy.retention.mode: automatic")
+	}
+	result, err := layout.Prune(job.Name, job.Policy.RetentionAge(), job.Policy.Retention.MinRuns, *dryRun, time.Now())
+	if err != nil {
+		return err
+	}
+	if *jsonOutput {
+		return runner.WriteJSON(a.Out, result)
+	}
+	_, err = fmt.Fprintf(a.Out, "retention: %d run(s), %d byte(s)%s\n", result.DeletedRuns, result.ReclaimedBytes, map[bool]string{true: " (dry run)", false: ""}[*dryRun])
+	return err
+}
+
 func (a Application) service(stateDir string) runner.Service {
 	return runner.Service{
 		StateDir:   stateDir,
 		RcloneBin:  envOr("PHOTOBRIDGE_RCLONE_BIN", "rclone"),
 		RcloneConf: os.Getenv("PHOTOBRIDGE_RCLONE_CONFIG_FILE"),
 		Executor:   a.Executor,
-		Out:        a.Out,
+		Progress:   a.Err,
 	}
 }
 
@@ -189,6 +229,7 @@ Commands:
   run              Create a manifest, copy, and verify a job.
   verify           Verify an existing source and destination pair.
   status           Read the latest persisted job report.
+  state prune      Apply or preview private run-state retention.
   version          Print build information.`)
 }
 
@@ -215,6 +256,12 @@ func classifyError(err error) int {
 		return ExitWaiting
 	case errors.Is(err, runner.ErrSelectionFailed):
 		return ExitSelection
+	case errors.Is(err, runner.ErrSourceChanged):
+		return ExitSelection
+	case errors.Is(err, runner.ErrLimitExceeded):
+		return ExitLimit
+	case errors.Is(err, runner.ErrTimeout):
+		return ExitTimeout
 	}
 	message := err.Error()
 	if strings.Contains(message, "configuration") || strings.Contains(message, "--job") || strings.Contains(message, "apiVersion") || strings.Contains(message, "required") || strings.Contains(message, "usage:") || strings.Contains(message, "unknown command") {

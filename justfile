@@ -18,7 +18,11 @@ vet:
 integration:
   scripts/integration-local.sh
 
-# Validate, tag, and publish a SemVer release. Example: just release v0.1.0
+# Requires disposable MinIO and WebDAV endpoints; CI supplies both.
+integration-backends:
+  scripts/integration-backends.sh
+
+# Validate, tag, and publish a SemVer release. Example: just release v0.1.3
 release version:
   scripts/release.sh "{{version}}"
 
@@ -29,10 +33,13 @@ build:
 public-audit:
   scripts/public-audit.sh
 
+public-audit-self-test:
+  scripts/public-audit.sh --self-test
+
 install-hooks:
   scripts/install-git-hooks.sh
 
-check: fmt-check test vet public-audit
+check: fmt-check test vet public-audit-self-test public-audit
 
 # OCI images are intentionally built only by GitHub Actions.
 image-build:

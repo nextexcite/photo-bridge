@@ -8,35 +8,94 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  fmt:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          fetch-depth: 0
+          go-version: 1.26.5
+          cache: true
+      - run: scripts/fmt-check.sh
+
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.5
+          cache: true
+      - run: go test -race ./...
+
+  vet:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.5
+          cache: true
+      - run: go vet ./...
+
+  integration-local:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.26.5
           cache: true
       - name: Install pinned rclone
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ripgrep unzip
-          archive=rclone-v1.74.4-linux-amd64.zip
-          curl --fail --location --silent --show-error \
-            "https://downloads.rclone.org/v1.74.4/${archive}" --output "/tmp/${archive}"
-          echo "fe435e0c36228e7c2f116a8701f01127bb1f694005fc11d1f27186c8bca4115d  /tmp/${archive}" | sha256sum --check --strict
-          unzip -q "/tmp/${archive}" -d /tmp/rclone
-          sudo install -m 0755 /tmp/rclone/rclone-v1.74.4-linux-amd64/rclone /usr/local/bin/rclone
-      - name: Format, test, and vet
-        run: |
-          scripts/fmt-check.sh
-          go test ./...
-          go vet ./...
-          scripts/integration-local.sh
-      - name: Public shape and identity audit
-        run: scripts/public-audit.sh --skip-gitleaks
+        run: scripts/install-rclone-ci.sh
+      - run: scripts/integration-local.sh
+
+  integration-backends:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.5
+          cache: true
+      - name: Install pinned rclone
+        run: scripts/install-rclone-ci.sh
+      - name: Exercise disposable MinIO and WebDAV backends
+        run: scripts/integration-backends.sh
+
+  public-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Install ripgrep for the audit
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends ripgrep
+      - run: scripts/public-audit.sh --self-test
+      - run: scripts/public-audit.sh --skip-gitleaks
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-gate:
+    if: always()
+    needs: [fmt, unit, vet, integration-local, integration-backends, public-audit]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Require every public gate
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          test "$(jq -r 'to_entries | map(select(.value.result != "success")) | length' <<<"$NEEDS")" = 0

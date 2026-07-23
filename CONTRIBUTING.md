@@ -19,9 +19,11 @@ contains no live account, storage, or server configuration.
 
 5. Review every staged file and commit header before pushing.
 
-`just public-audit` runs gitleaks, checks the outgoing Git history, rejects
-personal home-path shapes and non-example email addresses, and refuses tracked
-runtime/media artifacts. Do not bypass the gate to make a change pass.
+`just public-audit` runs gitleaks against the worktree and complete Git
+history, checks outgoing commit identities, rejects non-example emails,
+unapproved domains and IPs, sensitive path shapes, binary/media archives, and
+credential-like material. Its adversarial fixtures must pass; do not bypass the
+gate to make a change pass.
 
 ## Design boundaries
 
@@ -34,5 +36,5 @@ runtime/media artifacts. Do not bypass the gate to make a change pass.
 ## Reporting failures
 
 Redact account names, remotes, paths, host identities, URLs, and media names
-before sharing diagnostics. Prefer the structured status and exit code over a
-raw debug log.
+before sharing diagnostics. Prefer JSON stdout and sanitized stderr progress
+over a raw debug log.

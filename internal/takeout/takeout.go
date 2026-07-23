@@ -30,10 +30,11 @@ type Observation struct {
 }
 
 type Selection struct {
-	Fingerprint string    `json:"fingerprint"`
-	Paths       []string  `json:"paths"`
-	TotalBytes  int64     `json:"totalBytes"`
-	SelectedAt  time.Time `json:"selectedAt"`
+	Fingerprint string                `json:"fingerprint"`
+	Paths       []string              `json:"paths"`
+	Entries     []model.ManifestEntry `json:"entries"`
+	TotalBytes  int64                 `json:"totalBytes"`
+	SelectedAt  time.Time             `json:"selectedAt"`
 }
 
 type Candidate struct {
@@ -117,12 +118,15 @@ func Inspect(entries []model.ManifestEntry, previous Observation, now time.Time,
 	encoder := json.NewEncoder(hasher)
 	for _, item := range latest {
 		selection.Paths = append(selection.Paths, item.entry.Path)
+		selection.Entries = append(selection.Entries, item.entry)
 		selection.TotalBytes += item.entry.Size
 		_ = encoder.Encode(struct {
-			Path    string
-			Size    int64
-			ModTime time.Time
-		}{item.entry.Path, item.entry.Size, item.entry.ModTime.UTC()})
+			Path          string
+			Size          int64
+			ModTime       time.Time
+			HashAlgorithm string
+			Hash          string
+		}{item.entry.Path, item.entry.Size, item.entry.ModTime.UTC(), item.entry.HashAlgorithm, item.entry.Hash})
 	}
 	selection.Fingerprint = hex.EncodeToString(hasher.Sum(nil))
 
