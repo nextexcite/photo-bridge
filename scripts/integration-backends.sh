@@ -44,9 +44,18 @@ pass = ${WEBDAV_PASSWORD}
 EOF
 
 export PHOTOBRIDGE_RCLONE_CONFIG_FILE="$rclone_config"
+minio_name="photo-bridge-minio-$RANDOM-$RANDOM"
+docker run --detach --rm --name "$minio_name" --publish 9000:9000 \
+  --env MINIO_ROOT_USER="$MINIO_ACCESS_KEY" --env MINIO_ROOT_PASSWORD="$MINIO_SECRET_KEY" \
+  minio/minio:RELEASE.2025-04-22T22-12-26Z server /data > /dev/null
 rclone serve webdav "$webdav_root" --addr 127.0.0.1:8080 --user "$WEBDAV_USER" --pass "$WEBDAV_PASSWORD" >"$work_root/webdav.log" 2>&1 &
 webdav_pid=$!
-trap 'kill "$webdav_pid" 2>/dev/null || true; rm -rf "$work_root"' EXIT
+trap 'kill "$webdav_pid" 2>/dev/null || true; docker rm --force "$minio_name" >/dev/null 2>&1 || true; rm -rf "$work_root"' EXIT
+for attempt in {1..20}; do
+  curl --fail --silent --output /dev/null "$MINIO_ENDPOINT/minio/health/live" && break
+  sleep 1
+done
+docker inspect "$minio_name" >/dev/null
 for attempt in {1..20}; do
   curl --fail --silent --output /dev/null --user "$WEBDAV_USER:$WEBDAV_PASSWORD" "$WEBDAV_ENDPOINT/" && break
   sleep 1

@@ -72,7 +72,7 @@ audit_content() {
   # URLs are allowed only for public documentation and public project endpoints.
   while IFS= read -r domain; do
     allowed_domain "$domain" || record_failure "unapproved domain in $file"
-  done < <(rg -o --pcre2 '(?i)(?<=https?://)(?:[a-z0-9-]+\.)+[a-z]{2,}' "$file" | sort -u)
+  done < <(rg -o --pcre2 '(?i)https?://(?:[a-z0-9-]+\.)+[a-z]{2,}' "$file" | sed -E 's#^https?://##I' | sort -u)
 }
 
 audit_file() {

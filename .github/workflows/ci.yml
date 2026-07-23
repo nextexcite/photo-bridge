@@ -62,16 +62,6 @@ jobs:
   integration-backends:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    services:
-      minio:
-        image: minio/minio:RELEASE.2025-04-22T22-12-26Z
-        ports: [9000:9000]
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        options: >-
-          --health-cmd "curl --fail http://localhost:9000/minio/health/live || exit 1"
-          --health-interval 5s --health-timeout 3s --health-retries 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -80,7 +70,7 @@ jobs:
           cache: true
       - name: Install pinned rclone
         run: scripts/install-rclone-ci.sh
-      - name: Exercise MinIO source and WebDAV destination
+      - name: Exercise disposable MinIO and WebDAV backends
         run: scripts/integration-backends.sh
 
   public-audit:
