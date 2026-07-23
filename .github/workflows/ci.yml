@@ -72,15 +72,6 @@ jobs:
         options: >-
           --health-cmd "curl --fail http://localhost:9000/minio/health/live || exit 1"
           --health-interval 5s --health-timeout 3s --health-retries 20
-      webdav:
-        image: crazymax/webdav:2.6.0
-        ports: [8080:8080]
-        env:
-          WEBDAV_AUTH_TYPE: Basic
-          WEBDAV_USER: fixture-user
-          WEBDAV_PASS: fixture-password
-          WEBDAV_SCOPE: /data
-          WEBDAV_MODIFY: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -99,6 +90,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - name: Install ripgrep for the audit
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends ripgrep
       - run: scripts/public-audit.sh --self-test
       - run: scripts/public-audit.sh --skip-gitleaks
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0

@@ -19,7 +19,9 @@ config="$work_root/config.yaml"
 state="$work_root/state"
 rclone_config="$work_root/rclone.conf"
 source="$work_root/source"
+webdav_root="$work_root/webdav-root"
 mkdir -p "$source/nested" "$state"
+mkdir -p "$webdav_root"
 printf 'backend alpha\n' > "$source/alpha.txt"
 printf 'backend nested\n' > "$source/nested/item.txt"
 
@@ -42,6 +44,14 @@ pass = ${WEBDAV_PASSWORD}
 EOF
 
 export PHOTOBRIDGE_RCLONE_CONFIG_FILE="$rclone_config"
+rclone serve webdav "$webdav_root" --addr 127.0.0.1:8080 --user "$WEBDAV_USER" --pass "$WEBDAV_PASSWORD" >"$work_root/webdav.log" 2>&1 &
+webdav_pid=$!
+trap 'kill "$webdav_pid" 2>/dev/null || true; rm -rf "$work_root"' EXIT
+for attempt in {1..20}; do
+  curl --fail --silent --output /dev/null --user "$WEBDAV_USER:$WEBDAV_PASSWORD" "$WEBDAV_ENDPOINT/" && break
+  sleep 1
+done
+kill -0 "$webdav_pid"
 rclone --config "$rclone_config" mkdir fixture-minio:photo-bridge-source
 rclone --config "$rclone_config" copy "$source" fixture-minio:photo-bridge-source
 
