@@ -40,6 +40,7 @@ RUN git init \
     && test "$(git rev-parse HEAD)" = "$RCLONE_COMMIT" \
     && test "$(git describe --tags --exact-match)" = "v${RCLONE_VERSION}" \
     && go mod edit -require="google.golang.org/grpc@v${GRPC_VERSION}" \
+    && go mod tidy \
     && go mod download \
     && go mod verify \
     && CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
