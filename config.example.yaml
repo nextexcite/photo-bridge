@@ -1,4 +1,4 @@
-apiVersion: photo-bridge/v1alpha1
+apiVersion: photo-bridge/v1alpha2
 
 jobs:
   - name: example-archive
@@ -11,10 +11,24 @@ jobs:
       remote: archive-remote
       path: photos/account-a
     policy:
-      manifest: sha256
-      verification: auto
-      transfers: 8
-      retries: 3
+      integrity:
+        manifest: auto
+        verification: auto
+        allowEmpty: false
+      transfer:
+        transfers: 8
+        checkers: 8
+        bufferSize: 16MiB
+        maxBufferMemory: 256MiB
+      limits:
+        maxDuration: 0s
+        maxFiles: 0
+        maxBytes: 0
+      progressInterval: 5s
+      retention:
+        mode: automatic
+        maxAge: 720h
+        minRuns: 5
 
   # Google Takeout can create one ZIP or a numbered set. This job polls a
   # synthetic Drive remote, waits for a stable set, and copies only that set.
@@ -31,7 +45,21 @@ jobs:
       driver: filesystem
       path: /data/takeout-archive
     policy:
-      manifest: auto
-      verification: auto
-      transfers: 4
-      retries: 3
+      integrity:
+        manifest: auto
+        verification: auto
+        allowEmpty: false
+      transfer:
+        transfers: 4
+        checkers: 8
+        bufferSize: 16MiB
+        maxBufferMemory: 256MiB
+      limits:
+        maxDuration: 0s
+        maxFiles: 0
+        maxBytes: 0
+      progressInterval: 5s
+      retention:
+        mode: automatic
+        maxAge: 720h
+        minRuns: 5

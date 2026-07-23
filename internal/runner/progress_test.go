@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestProgressWriterEmitsSanitizedSummaryAndPreservesRawLog(t *testing.T) {
 	var raw bytes.Buffer
 	var progress bytes.Buffer
-	writer := newProgressWriter(&raw, &progress, "transfer")
+	writer := newProgressWriter(&raw, &progress, "transfer", 0, nil)
 	line := `{"object":"private-name.zip","stats":{"bytes":5368709120,"totalBytes":10737418240,"speed":20971520,"eta":256,"errors":0}}` + "\n"
 
 	if _, err := writer.Write([]byte(line)); err != nil {
@@ -32,7 +33,7 @@ func TestProgressWriterEmitsSanitizedSummaryAndPreservesRawLog(t *testing.T) {
 func TestProgressWriterIgnoresNonStatsLines(t *testing.T) {
 	var raw bytes.Buffer
 	var progress bytes.Buffer
-	writer := newProgressWriter(&raw, &progress, "verification")
+	writer := newProgressWriter(&raw, &progress, "verification", time.Second, nil)
 	line := `{"level":"info","msg":"checking private-name.zip"}` + "\n"
 	if _, err := writer.Write([]byte(line)); err != nil {
 		t.Fatal(err)

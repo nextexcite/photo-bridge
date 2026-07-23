@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-const validConfig = `apiVersion: photo-bridge/v1alpha1
+const validConfig = `apiVersion: photo-bridge/v1alpha2
 jobs:
   - name: example-archive
     operation: copy
@@ -25,14 +25,24 @@ func TestDecodeNormalizesDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	job := cfg.Jobs[0]
-	if job.Policy.Manifest != "sha256" || job.Policy.Verification != "auto" {
+	if job.Policy.Integrity.Manifest != "auto" || job.Policy.Integrity.Verification != "auto" {
 		t.Fatalf("unexpected policy defaults: %#v", job.Policy)
 	}
-	if job.Policy.Transfers != 8 || job.Policy.Retries != 3 {
+	if job.Policy.Transfer.Transfers != 8 || job.Policy.Transfer.Checkers != 8 {
 		t.Fatalf("unexpected numeric defaults: %#v", job.Policy)
 	}
 	if got := job.Destination.RcloneSpec(); got != "archive-remote:photos/account-a" {
 		t.Fatalf("unexpected rclone spec: %q", got)
+	}
+}
+
+func TestDecodeRejectsV1Alpha1AndInvalidByteValues(t *testing.T) {
+	if _, err := Decode(strings.NewReader(strings.Replace(validConfig, "v1alpha2", "v1alpha1", 1))); err == nil {
+		t.Fatal("expected v1alpha1 rejection")
+	}
+	input := strings.Replace(validConfig, "policy: {}", "policy:\n      transfer:\n        bufferSize: 16.5MiB", 1)
+	if _, err := Decode(strings.NewReader(input)); err == nil {
+		t.Fatal("expected fractional buffer-size rejection")
 	}
 }
 

@@ -7,6 +7,8 @@ import (
 	"io"
 	"sync"
 	"time"
+
+	"github.com/nextexcite/photo-bridge/internal/model"
 )
 
 type progressWriter struct {
@@ -14,6 +16,10 @@ type progressWriter struct {
 	raw      io.Writer
 	progress io.Writer
 	phase    string
+	every    time.Duration
+	last     time.Time
+	lastEmit time.Time
+	onUpdate func(model.Progress)
 	buf      bytes.Buffer
 }
 
@@ -27,8 +33,8 @@ type rcloneProgressLine struct {
 	} `json:"stats"`
 }
 
-func newProgressWriter(raw, progress io.Writer, phase string) *progressWriter {
-	return &progressWriter{raw: raw, progress: progress, phase: phase}
+func newProgressWriter(raw, progress io.Writer, phase string, every time.Duration, onUpdate func(model.Progress)) *progressWriter {
+	return &progressWriter{raw: raw, progress: progress, phase: phase, every: every, onUpdate: onUpdate}
 }
 
 func (w *progressWriter) Write(p []byte) (int, error) {
@@ -73,6 +79,16 @@ func (w *progressWriter) writeProgress(line []byte) {
 	if event.Stats.ETA != nil && *event.Stats.ETA >= 0 {
 		eta = (time.Duration(*event.Stats.ETA) * time.Second).Round(time.Second).String()
 	}
+	now := time.Now().UTC()
+	progress := model.Progress{Percent: percent, Transferred: event.Stats.Bytes, Total: event.Stats.TotalBytes, Speed: event.Stats.Speed, ETASeconds: event.Stats.ETA, Errors: event.Stats.Errors, LastUpdated: now}
+	if w.onUpdate != nil && (w.last.IsZero() || now.Sub(w.last) >= w.every) {
+		w.onUpdate(progress)
+		w.last = now
+	}
+	if !w.lastEmit.IsZero() && now.Sub(w.lastEmit) < w.every && w.every > 0 {
+		return
+	}
+	w.lastEmit = now
 	_, _ = fmt.Fprintf(
 		w.progress,
 		"photo-bridge: phase=%s progress=%.1f%% transferred=%s total=%s speed=%s/s eta=%s errors=%d\n",

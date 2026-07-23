@@ -55,10 +55,12 @@ This flag bypasses the settle timer. It does not bypass structural checks. The
 runner refuses duplicate logical filenames, part numbers below one, duplicate
 part numbers, and numeric sequences with gaps.
 
-Before transfer, the accepted list is stored as private job state. Both copy
-and verification are filtered to that list. If the network, process, or host
-fails, the next run retries the same pinned list rather than selecting a newer
-export. Rclone copy safely skips files that already completed.
+Before transfer, the accepted list is stored as private job state with each
+object's path, size, modification time, and available hash. Both copy and
+verification are filtered to that list. The runner revalidates it before copy
+and verification; a changed source fails rather than mixing a newer export.
+If the network, process, or host fails, the next run retries the same pinned
+list. Rclone copy safely skips files that already completed.
 
 After successful one-way verification, the pin becomes the completed marker.
 Polling the same export then returns exit `6` and status `up_to_date`.
@@ -74,4 +76,6 @@ Polling the same export then returns exit `6` and status `up_to_date`.
   logs if repeated attempts fail.
 
 Do not edit `active.json` casually. It is the recovery boundary that prevents
-one logical run from mixing two exports.
+one logical run from mixing two exports. `v1alpha2` does not read legacy state:
+initialize a fresh state root during the hard-cut upgrade, then dry-run and
+reverify the existing destination before enabling scheduled runs.

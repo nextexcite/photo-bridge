@@ -10,6 +10,10 @@ Use GitHub private vulnerability reporting for security-sensitive reports. Do
 not open a public issue containing credentials, personal infrastructure data,
 browser profiles, media, or unredacted logs.
 
+If private reporting is unavailable on a fork or mirror, contact the current
+maintainers through the repository's security advisory flow rather than posting
+the vulnerability publicly.
+
 ## Credential boundary
 
 `photo-bridge` consumes only a path to a runtime-mounted rclone configuration.

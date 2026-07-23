@@ -22,6 +22,10 @@ type fakeExecutor struct {
 func (f *fakeExecutor) Run(_ context.Context, name string, args []string, stdout, _ io.Writer) process.Result {
 	call := append([]string{name}, args...)
 	f.calls = append(f.calls, call)
+	if len(args) >= 2 && args[0] == "backend" && args[1] == "features" {
+		_, _ = io.WriteString(stdout, `{"Features":{"Hashes":["sha256"]}}`)
+		return process.Result{ExitCode: 0}
+	}
 	if f.failAt > 0 && len(f.calls) == f.failAt {
 		return process.Result{ExitCode: 9, Err: context.Canceled}
 	}
@@ -42,10 +46,11 @@ func testJob(source, destination string) config.Job {
 			Path:   destination,
 		},
 		Policy: config.Policy{
-			Manifest:     "sha256",
-			Verification: "auto",
-			Transfers:    4,
-			Retries:      2,
+			Integrity:        config.IntegrityPolicy{Manifest: "sha256", Verification: "auto"},
+			Transfer:         config.TransferPolicy{Transfers: 4, Checkers: 4, BufferSize: "16MiB", MaxBufferMemory: "256MiB"},
+			Limits:           config.LimitsPolicy{MaxDuration: "0s"},
+			ProgressInterval: "5s",
+			Retention:        config.RetentionPolicy{Mode: "automatic", MaxAge: "720h", MinRuns: 5},
 		},
 	}
 }
@@ -71,19 +76,25 @@ func TestRunUsesCopyAndOneWayCheck(t *testing.T) {
 	if report.Status != "succeeded" || !report.NonDestructive {
 		t.Fatalf("unexpected report: %#v", report)
 	}
-	if len(executor.calls) != 2 {
+	var copyCall, checkCall []string
+	for _, call := range executor.calls {
+		if len(call) > 1 && call[1] == "copy" {
+			copyCall = call
+		}
+		if len(call) > 1 && call[1] == "check" {
+			checkCall = call
+		}
+	}
+	if copyCall == nil || checkCall == nil {
 		t.Fatalf("expected copy and check calls, got %#v", executor.calls)
 	}
-	if executor.calls[0][1] != "copy" {
-		t.Fatalf("first command was not copy: %#v", executor.calls[0])
-	}
 	for _, forbidden := range []string{"sync", "move", "delete", "purge"} {
-		if slices.Contains(executor.calls[0], forbidden) {
+		if slices.Contains(copyCall, forbidden) {
 			t.Fatalf("copy command contains forbidden operation %q", forbidden)
 		}
 	}
-	if executor.calls[1][1] != "check" || !slices.Contains(executor.calls[1], "--one-way") {
-		t.Fatalf("verification is not one-way: %#v", executor.calls[1])
+	if !slices.Contains(checkCall, "--one-way") {
+		t.Fatalf("verification is not one-way: %#v", checkCall)
 	}
 }
 
@@ -98,7 +109,13 @@ func TestDryRunSkipsVerification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(executor.calls) != 1 || !slices.Contains(executor.calls[0], "--dry-run") {
+	var copyCall []string
+	for _, call := range executor.calls {
+		if len(call) > 1 && call[1] == "copy" {
+			copyCall = call
+		}
+	}
+	if copyCall == nil || !slices.Contains(copyCall, "--dry-run") {
 		t.Fatalf("unexpected dry-run calls: %#v", executor.calls)
 	}
 	if report.Verification.Status != "skipped" {
@@ -113,7 +130,7 @@ func TestRunWritesRedactedFailureReport(t *testing.T) {
 		t.Fatal(err)
 	}
 	stateDir := t.TempDir()
-	executor := &fakeExecutor{failAt: 1}
+	executor := &fakeExecutor{failAt: 3}
 	report, err := (Service{StateDir: stateDir, Executor: executor}).Run(context.Background(), testJob(source, destination), RunOptions{})
 	if err == nil {
 		t.Fatal("expected transfer failure")
@@ -157,6 +174,9 @@ func TestTakeoutRunPinsOnlyLatestArchiveSet(t *testing.T) {
 		t.Fatalf("unexpected selection report: %#v", report.Selection)
 	}
 	for _, call := range executor.calls {
+		if len(call) < 2 || (call[1] != "copy" && call[1] != "check") {
+			continue
+		}
 		if !slices.Contains(call, "--files-from-raw") {
 			t.Fatalf("selected operation lacks --files-from-raw: %#v", call)
 		}
